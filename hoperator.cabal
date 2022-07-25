@@ -34,6 +34,7 @@ common common-dependencies
         text,
         transformers,
         transformers-base,
+        unliftio-core,
         vector,
         http-client
         
@@ -92,11 +93,22 @@ test-suite tests
     main-is: Main.hs
     hs-source-dirs: tests
 
-executable example-watch
+executable example-list-jobs
+  import: common-dependencies
+  import: common-extensions
+  import: common-rts-options
+  build-depends:
+    aeson-pretty,
+    bytestring,
+    hoperator
+  main-is:        ListJobsExample.hs
+  hs-source-dirs: examples
+
+executable example-watch-jobs
   import: common-dependencies
   import: common-extensions
   import: common-rts-options
   build-depends:
     hoperator
-  main-is:        Watch.hs
+  main-is:        WatchJobsExample.hs
   hs-source-dirs: examples

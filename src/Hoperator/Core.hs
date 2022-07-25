@@ -6,6 +6,7 @@ import Control.Monad.Reader (MonadIO, MonadPlus, MonadReader (ask), ReaderT (run
 import Control.Monad.Trans (MonadTrans)
 import Kubernetes.OpenAPI
 import Network.HTTP.Client (Manager, defaultManagerSettings, newManager)
+import Control.Monad.IO.Unlift (MonadUnliftIO)
 
 data HoperatorEnv = HoperatorEnv
   { manager :: Manager
@@ -24,16 +25,18 @@ newtype HoperatorT m a = HoperatorT (ReaderT HoperatorEnv m a)
     , MonadPlus
     )
 
+deriving newtype instance MonadUnliftIO m => MonadUnliftIO (HoperatorT m)
 deriving newtype instance MonadBase b m => MonadBase b (HoperatorT m)
 
 defaultHoperatorEnv :: MonadBase IO m => m HoperatorEnv
 defaultHoperatorEnv = do
   manager <- liftBase $ newManager defaultManagerSettings
   defaultConfig <- liftBase newConfig
+  let config = defaultConfig { configHost = "http://localhost:8001", configValidateAuthMethods = False }
   pure $
     HoperatorEnv
       { manager
-      , kubernetesClientConfig = defaultConfig
+      , kubernetesClientConfig = config
       }
 
 runHoperatorT :: HoperatorEnv -> HoperatorT m a -> m a
