@@ -1,0 +1,77 @@
+cabal-version:      2.4
+name:               hoperator
+version:            0.1.0.0
+
+-- A short (one-line) description of the package.
+synopsis: A small framework for Kubernetes operators
+
+-- A longer description of the package.
+-- description:
+
+-- A URL where users can report bugs.
+-- bug-reports:
+
+-- The license under which the package is released.
+-- license:
+author:             Guillaume Bogard
+maintainer:         hey@guillaumebogard.dev
+category: Web
+extra-source-files: CHANGELOG.md
+
+common common-dependencies
+    build-depends:
+        base
+
+common common-rts-options
+  ghc-options: -threaded "-with-rtsopts=-N -T"
+
+common common-extensions
+  default-extensions:
+    NoMonomorphismRestriction
+    NoStarIsType
+    ConstraintKinds
+    DataKinds
+    DeriveAnyClass
+    DeriveGeneric
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    FlexibleContexts
+    FlexibleInstances
+    GeneralizedNewtypeDeriving
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    NamedFieldPuns
+    OverloadedLabels
+    OverloadedStrings
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    RecordWildCards
+    ScopedTypeVariables
+    StandaloneDeriving
+    StrictData
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+library
+    import:          common-dependencies
+    import:          common-extensions
+    hs-source-dirs:   src
+    default-language: Haskell2010
+    exposed-modules:
+        Hoperator
+
+
+test-suite tests
+    import: common-dependencies
+    import: common-extensions
+    import: common-rts-options
+    type: exitcode-stdio-1.0
+    main-is: Main.hs
+    hs-source-dirs: tests
