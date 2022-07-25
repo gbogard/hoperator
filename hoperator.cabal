@@ -20,8 +20,23 @@ extra-source-files: CHANGELOG.md
 
 common common-dependencies
     build-depends:
-        base
-
+        aeson >=1.0 && <2.0,
+        base,
+        containers,
+        haskell-kubernetes,
+        hoauth2 ==1.16.2,
+        json-stream,
+        kubernetes-client==0.4.2.0,
+        kubernetes-client-core==0.4.2.0,
+        mtl,
+        streaming,
+        streaming-bytestring,
+        text,
+        transformers,
+        transformers-base,
+        vector,
+        http-client
+        
 common common-rts-options
   ghc-options: -threaded "-with-rtsopts=-N -T"
 
@@ -65,8 +80,9 @@ library
     hs-source-dirs:   src
     default-language: Haskell2010
     exposed-modules:
-        Hoperator
-
+        Hoperator,
+        Hoperator.Core,
+        Hoperator.Watcher
 
 test-suite tests
     import: common-dependencies
@@ -75,3 +91,12 @@ test-suite tests
     type: exitcode-stdio-1.0
     main-is: Main.hs
     hs-source-dirs: tests
+
+executable example-watch
+  import: common-dependencies
+  import: common-extensions
+  import: common-rts-options
+  build-depends:
+    hoperator
+  main-is:        Watch.hs
+  hs-source-dirs: examples
