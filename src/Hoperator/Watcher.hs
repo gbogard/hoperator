@@ -11,8 +11,8 @@ import Control.Monad.Reader
     void,
   )
 import Data.Aeson
-import Data.JsonStream.Parser (ParseOutput (..))
-import qualified Data.JsonStream.Parser as J
+import Data.Function
+import Data.Functor
 import Hoperator.Core
 import Kubernetes.Client (WatchEvent, dispatchWatch)
 import Kubernetes.OpenAPI
@@ -20,45 +20,39 @@ import Streaming
 import Streaming.ByteString
 import qualified Streaming.ByteString.Char8 as Q
 import qualified Streaming.Prelude as S
+import Data.Data
 
-type Closure m res done = Stream (Of (WatchEvent res)) (HoperatorT m) (Maybe String) -> HoperatorT m done
+type Closure m item done = Stream (Of (WatchEvent item)) (HoperatorT m) () -> HoperatorT m done
 
 {- | Performs an action using a stream of events.
  The stream is acquired by dispatching a call to the K8s API, using the "watch" parameter.
  The resulting HTTP connection, and thus stream, will be kept active as long as the provided action/closure hasn't returned.
 -}
 watchStream ::
-  forall req res contentType done m.
-  (HasOptionalParam req Watch, MonadUnliftIO m, FromJSON res, MimeType contentType) =>
-  Closure m res done ->
-  KubernetesRequest req contentType res MimeJSON ->
+  forall req resp singleItem contentType done m.
+  (HasOptionalParam req Watch, MonadUnliftIO m, FromJSON singleItem, MimeType contentType) =>
+  Proxy singleItem ->
+  Closure m singleItem done ->
+  KubernetesRequest req contentType resp MimeJSON ->
   HoperatorT m done
-watchStream closure req = do
+watchStream _ closure req = do
   HoperatorEnv{manager, kubernetesClientConfig} <- ask
-  withRunInIO $ \run ->
+  withRunInIO $ \toIO ->
     dispatchWatch manager kubernetesClientConfig req $ \bs ->
-      run . wrapClosureWithLogs closure . hoist liftIO $ streamParse J.value bs
-
-wrapClosureWithLogs :: MonadUnliftIO m => Closure m res done -> Closure m res done
-wrapClosureWithLogs closure str = do
-  liftIO . putStrLn $ "[DEBUG] Acquiring closure"
-  res <- closure str
-  liftIO . putStrLn $ "[DEBUG] Closing closure"
-  pure res
+      toIO . closure . hoist liftIO $ streamParse bs
 
 streamParse ::
-  (Monad m) =>
-  J.Parser a ->
-  ByteStream m r ->
-  Stream (Of a) m (Maybe String)
-streamParse parser input = loop input (J.runParser parser)
-  where
-    loop bytes p0 = case p0 of
-      ParseFailed err -> return $ Just err
-      ParseDone bs -> return Nothing
-      ParseYield a p1 -> S.yield a >> loop bytes p1
-      ParseNeedData f -> do
-        e <- lift $ unconsChunk bytes
-        case e of
-          Left r -> return $ Just "Not enough data"
-          Right (bs, rest) -> loop rest (f bs)
+  forall m a.
+  (MonadUnliftIO m, FromJSON a) =>
+  ByteStream m () ->
+  Stream (Of a) m ()
+streamParse bs =
+  Q.lines bs
+    & S.mapped Q.toLazy
+    & S.mapM (\res -> liftIO (print res) >> pure res)
+    & S.map eitherDecode'
+    & S.mapMaybeM
+      ( \case
+          Right a -> pure $ Just a
+          Left err -> liftIO (print err) $> Nothing
+      )

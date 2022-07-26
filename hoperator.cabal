@@ -25,7 +25,6 @@ common common-dependencies
         containers,
         haskell-kubernetes,
         hoauth2 ==1.16.2,
-        json-stream,
         kubernetes-client==0.4.2.0,
         kubernetes-client-core==0.4.2.0,
         mtl,

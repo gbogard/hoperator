@@ -4,14 +4,15 @@ import Hoperator.Watcher
 import Kubernetes.OpenAPI
 import Kubernetes.OpenAPI.API.BatchV1
 import Streaming
+import Data.Data
 import qualified Streaming.Prelude as S
 
 main :: IO ()
 main = do
   hoperatorEnv <- defaultHoperatorEnv
   let req = (listJobForAllNamespaces (Accept MimeJSON))
+  let stream = watchStream (Proxy @V1Job) S.print $ req
 
-  putStrLn "Subscribing to Jobs in all namespaces"
   putStrLn "Detected job changes:"
-  runHoperatorT hoperatorEnv . void . watchStream S.print $ req
+  runHoperatorT hoperatorEnv . void $ stream
     
