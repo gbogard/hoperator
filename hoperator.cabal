@@ -16,7 +16,9 @@ synopsis: A small framework for Kubernetes operators
 author:             Guillaume Bogard
 maintainer:         hey@guillaumebogard.dev
 category: Web
-extra-source-files: CHANGELOG.md
+extra-source-files: 
+  CHANGELOG.md
+  README.md
 
 common common-dependencies
     build-depends:
