@@ -13,8 +13,8 @@ main = do
 
 program :: HoperatorT IO ()
 program = do
-  let req = (listJobForAllNamespaces (Accept MimeJSON))
-  let stream = listStream v1JobListItems req
+  let req = listJobForAllNamespaces (Accept MimeJSON)
+  let stream = listStream v1JobListMetadata v1JobListItems req
 
   lDebug "Listing jobs in all namespaces (using streams):"
   S.mapM_ (lInfo . pack . show) stream

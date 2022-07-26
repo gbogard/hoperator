@@ -27,20 +27,41 @@ import qualified Streaming.Prelude as S
 
 type Closure m item done = Stream (Of (WatchEvent item)) (HoperatorT m) () -> HoperatorT m done
 
--- | Executes a Kubernetes request and returns the result as a stream of elements
+-- | Executes a Kubernetes request and returns the result as a stream of elements.
+-- This internally uses the 'APIListChunking' feature of Kubernetes to retrieve the results in manageable chunks.
 listStream ::
   forall req resp accept contentType singleItem m.
-  (MonadIO m, Produces req accept, MimeUnrender accept resp, MimeType contentType) =>
+  ( MonadIO m
+  , Produces req accept
+  , MimeUnrender accept resp
+  , MimeType contentType
+  , HasOptionalParam req Limit
+  , HasOptionalParam req Continue
+  ) =>
+  -- | extracts metadata from the response
+  (resp -> Maybe V1ListMeta) ->
   -- | extracts a list of items from the response
   (resp -> [singleItem]) ->
   -- | the 'KubernetesRequest'
   KubernetesRequest req contentType resp accept ->
   Stream (Of singleItem) (HoperatorT m) ()
-listStream extractItems req = do
-  res <- lift $ runRequest req
-  case res of
-    Right r -> S.each $ extractItems r
-    Left err -> lift . lError . pack . show $ err
+listStream extractMeta extractItems req = do
+  HoperatorEnv{chunkSize} <- ask
+  run (req -&- Limit chunkSize)
+  where
+    run req = do
+      lift . lDebug $ "Hoperator.Watcher.listStream: Requesting " <> (pack . show $ req)
+      res <- lift $ runRequest req
+      case res of
+        Right res -> do
+          let items = extractItems res
+          case extractMeta res of
+            Just m | Just continuation <- v1ListMetaContinue m -> do
+              lift . lTrace $ "Hoperator.Watcher.listStream: Continuing using received continuation " <> (pack . show $ continuation)
+              let reqWithContinue = req -&- Continue continuation
+              S.each items >> run reqWithContinue
+            _ -> S.each items
+        Left err -> lift . lError . pack . show $ err
 
 -- | Performs an action using a stream of events.
 -- The stream is acquired by dispatching a call to the K8s API, using the "watch" parameter.

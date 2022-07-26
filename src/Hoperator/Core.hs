@@ -36,6 +36,7 @@ data HoperatorEnv = HoperatorEnv
   { manager :: Manager
   , kubernetesClientConfig :: KubernetesClientConfig
   , logLevel :: LogLevel
+  , chunkSize :: Int
   }
 
 newtype HoperatorT m a = HoperatorT (ReaderT HoperatorEnv m a)
@@ -65,6 +66,7 @@ defaultHoperatorEnv = do
       { manager
       , kubernetesClientConfig = config
       , logLevel = Debug
+      , chunkSize = 500
       }
 
 runHoperatorT :: HoperatorEnv -> HoperatorT m a -> m a
