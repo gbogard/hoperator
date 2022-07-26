@@ -107,6 +107,16 @@ executable example-list-jobs
   main-is:        ListJobsExample.hs
   hs-source-dirs: examples
 
+executable example-list-jobs-stream
+  import: common-dependencies
+  import: common-extensions
+  import: common-rts-options
+  build-depends:
+    bytestring,
+    hoperator
+  main-is:        ListJobsStreamExample.hs
+  hs-source-dirs: examples
+
 executable example-watch-jobs
   import: common-dependencies
   import: common-extensions

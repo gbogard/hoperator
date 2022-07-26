@@ -1,5 +1,6 @@
 module Hoperator.Watcher
   ( Closure,
+    listStream,
     watchStream,
   )
 where
@@ -26,14 +27,33 @@ import qualified Streaming.Prelude as S
 
 type Closure m item done = Stream (Of (WatchEvent item)) (HoperatorT m) () -> HoperatorT m done
 
+-- | Executes a Kubernetes request and returns the result as a stream of elements
+listStream ::
+  forall req resp accept contentType singleItem m.
+  (MonadIO m, Produces req accept, MimeUnrender accept resp, MimeType contentType) =>
+  -- | extracts a list of items from the response
+  (resp -> [singleItem]) ->
+  -- | the 'KubernetesRequest'
+  KubernetesRequest req contentType resp accept ->
+  Stream (Of singleItem) (HoperatorT m) ()
+listStream extractItems req = do
+  res <- lift $ runRequest req
+  case res of
+    Right r -> S.each $ extractItems r
+    Left err -> lift . lError . pack . show $ err
+
 -- | Performs an action using a stream of events.
 -- The stream is acquired by dispatching a call to the K8s API, using the "watch" parameter.
 -- The resulting HTTP connection, and thus stream, will be kept active as long as the provided action/closure hasn't returned.
 watchStream ::
-  forall req resp singleItem contentType done m.
+  forall req resp contentType singleItem done m.
   (HasOptionalParam req Watch, MonadUnliftIO m, FromJSON singleItem, MimeType contentType) =>
+  -- | A Proxy that indicates the expected type of single elements in the stream so we can determine the correct JSON decoder
   Proxy singleItem ->
+  -- | Access the stream from within the closure and implement your logic here. The HTTP connection will be discarded once the
+  -- closure returns. It is possible never to return so items are watched for the entire lifetime of the program.
   Closure m singleItem done ->
+  -- | The 'KubernetesRequest'
   KubernetesRequest req contentType resp MimeJSON ->
   HoperatorT m done
 watchStream _ closure req = do

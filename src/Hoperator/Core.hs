@@ -80,12 +80,13 @@ runHoperatorT env (HoperatorT reader) = runReaderT reader env
 
 -- | Send a request to Kubernetes, returning the decoded body or an error
 runRequest ::
-  (MonadBase IO m, Produces req accept, MimeUnrender accept res, MimeType contentType) =>
+  forall req res accept contentType m.
+  (MonadIO m, Produces req accept, MimeUnrender accept res, MimeType contentType) =>
   KubernetesRequest req contentType res accept ->
   HoperatorT m (Either MimeError res)
 runRequest req = do
   HoperatorEnv{manager, kubernetesClientConfig} <- ask
-  liftBase $ dispatchMime' manager kubernetesClientConfig req
+  liftIO $ dispatchMime' manager kubernetesClientConfig req
 
 -- * Logging
 
