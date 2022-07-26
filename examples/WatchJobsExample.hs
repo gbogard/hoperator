@@ -10,9 +10,12 @@ import qualified Streaming.Prelude as S
 main :: IO ()
 main = do
   hoperatorEnv <- defaultHoperatorEnv
-  let req = (listJobForAllNamespaces (Accept MimeJSON))
-  let stream = watchStream (Proxy @V1Job) S.print $ req
+  runHoperatorT hoperatorEnv program
 
-  putStrLn "Detected job changes:"
-  runHoperatorT hoperatorEnv . void $ stream
-    
+program :: HoperatorT IO () 
+program = do
+  let req = (listJobForAllNamespaces (Accept MimeJSON))
+
+  lInfo "Subscribing to jobs in all namespaces"
+  lInfo "Detected job changes:"
+  watchStream (Proxy @V1Job) S.print req

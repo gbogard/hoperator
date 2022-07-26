@@ -1,18 +1,22 @@
+import Control.Monad.IO.Class
 import Data.Aeson.Encode.Pretty (encodePretty)
-import Data.Function
+import qualified Data.ByteString.Lazy.Char8 as BS
+import Data.Text (pack)
 import Hoperator.Core
 import Kubernetes.OpenAPI
 import Kubernetes.OpenAPI.API.BatchV1
-import Streaming
-import qualified Streaming.Prelude as S
-import qualified Data.ByteString.Lazy.Char8 as BS
 
 main :: IO ()
 main = do
   hoperatorEnv <- defaultHoperatorEnv
-  putStrLn "Listing jobs:"
+  runHoperatorT hoperatorEnv program
+
+program :: HoperatorT IO ()
+program = do
   let req = (listJobForAllNamespaces (Accept MimeJSON))
-  res <- runHoperatorT hoperatorEnv (runRequest req)
+
+  lInfo "Listing jobs in all namespaces:"
+  res <- runRequest req
   case res of
-    Right jobs -> BS.putStrLn $ encodePretty jobs
-    Left err -> putStrLn "ERROR:" >> print err
+    Right jobs -> liftIO . BS.putStrLn $ encodePretty jobs
+    Left err -> lError . pack . show $ err

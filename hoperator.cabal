@@ -33,6 +33,8 @@ common common-dependencies
         streaming,
         streaming-bytestring,
         text,
+        text-ansi,
+        time,
         transformers,
         transformers-base,
         unliftio-core,

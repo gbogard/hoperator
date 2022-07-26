@@ -1,1 +1,5 @@
-module Hoperator where
+module Hoperator (
+  module Hoperator.Core
+) where
+
+import Hoperator.Core
