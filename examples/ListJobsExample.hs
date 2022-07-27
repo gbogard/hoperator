@@ -13,7 +13,7 @@ main = do
 
 program :: HoperatorT IO ()
 program = do
-  let req = (listJobForAllNamespaces (Accept MimeJSON))
+  let req = listJobForAllNamespaces (Accept MimeJSON)
 
   lInfo "Listing jobs in all namespaces:"
   res <- runRequest req

@@ -16,4 +16,5 @@ kubectl proxy # Make the Kubernetes API accessible on localhost:8080
 
 cabal run example-watch-jobs
 cabal run example-list-jobs
+cabal run example-list-then-watch-jobs
 ```

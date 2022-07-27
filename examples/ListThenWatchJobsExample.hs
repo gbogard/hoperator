@@ -8,7 +8,8 @@ import qualified Streaming.Prelude as S
 main :: IO ()
 main = do
   hoperatorEnv <- defaultHoperatorEnv
-  runHoperatorT hoperatorEnv program
+  let env = hoperatorEnv {logLevel = Trace}
+  runHoperatorT env program
 
 program :: HoperatorT IO () 
 program = do
@@ -16,4 +17,4 @@ program = do
 
   lInfo "Subscribing to jobs in all namespaces"
   lInfo "Detected job changes:"
-  watchStream (Proxy @V1Job) req S.print
+  listThenWatchStream v1JobListMetadata v1JobListItems req S.print

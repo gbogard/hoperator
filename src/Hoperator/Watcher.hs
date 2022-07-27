@@ -3,9 +3,11 @@ module Hoperator.Watcher
     listStream,
     watchStream,
     watchStreamFromLatestResourceVersion,
+    listThenWatchStream,
   )
 where
 
+import Control.Concurrent
 import Control.Monad.Base (MonadBase (liftBase))
 import Control.Monad.IO.Unlift
 import Control.Monad.Reader
@@ -19,12 +21,22 @@ import Data.Function
 import Data.Functor
 import Data.Text
 import Hoperator.Core
-import Kubernetes.Client (WatchEvent, dispatchWatch)
+import Kubernetes.Client (dispatchWatch)
 import Kubernetes.OpenAPI
 import Streaming
 import Streaming.ByteString (ByteStream)
 import qualified Streaming.ByteString.Char8 as Q
 import qualified Streaming.Prelude as S
+
+data WatchEvent t = WatchEvent
+  { eventType :: Text
+  , eventObject :: t
+  }
+  deriving (Eq, Show)
+
+instance FromJSON t => FromJSON (WatchEvent t) where
+  parseJSON (Object x) = WatchEvent <$> x .: "type" <*> x .: "object"
+  parseJSON _ = fail "Expected an object"
 
 type Closure m item done = Stream (Of (WatchEvent item)) (HoperatorT m) () -> HoperatorT m done
 
@@ -79,24 +91,23 @@ listStream extractMeta extractItems req = do
 watchStream ::
   forall req resp contentType singleItem done m.
   ( HasOptionalParam req Watch
-  , MonadUnliftIO m
+  , MonadIO m
   , FromJSON singleItem
   , MimeType contentType
   ) =>
   -- | A Proxy that indicates the expected type of single elements in the stream so we can determine the correct JSON decoder
   Proxy singleItem ->
+  -- | The 'KubernetesRequest'
+  KubernetesRequest req contentType resp MimeJSON ->
   -- | Access the stream from within the closure and implement your logic here. The HTTP connection will be discarded once the
   -- closure returns. It is possible never to return so items are watched for the entire lifetime of the program.
   Closure m singleItem done ->
-  -- | The 'KubernetesRequest'
-  KubernetesRequest req contentType resp MimeJSON ->
   HoperatorT m done
-watchStream _ closure req = do
+watchStream proxy req closure = do
   let closureWithLogs = wrapClosureWithLogs (pack . show $ req) closure
-  HoperatorEnv{manager, kubernetesClientConfig} <- ask
-  withRunInIO $ \toIO ->
-    dispatchWatch manager kubernetesClientConfig req $ \bs ->
-      toIO . closureWithLogs . hoist liftIO $ streamParse bs
+  signalMVar <- liftIO newEmptyMVar
+  let stream = watchStreamUnsafe proxy signalMVar req
+  closure stream <* liftIO (putMVar signalMVar ())
 
 -- | Same as 'watchStream' but also sends a 'ResourceVersion' parameter so that
 -- events are only retrieved from the last seen 'ResourceVersion' according to our cache.
@@ -123,41 +134,60 @@ watchStreamFromLatestResourceVersion p closure req = do
         case version of
           Just v -> req -&- v
           Nothing -> req
-  watchStream p closure reqWithVersion
+  watchStream p reqWithVersion closure
 
+-- | The "watch-then-stream" pattern returns a stream of all resources that match the request
+-- by calling 'listStream', and then streams all subsequent changes to these resources.
+-- * Like 'listStream', resources are internally chunked using the configured chunkSize
+-- * Like 'watchStream', the underlying HTTP connection will be kept open for as long as your closure doesn't return
+-- * Like 'watchStreamFromLatestResourceVersion', the "watch" part after the "list" part only returns updates since the latest
+-- observed 'ResourceVersion'
 listThenWatchStream ::
   forall req resp contentType singleItem done m.
-  ( HasOptionalParam req Watch
-  , HasOptionalParam req ResourceVersion
-  , MonadUnliftIO m
-  , FromJSON singleItem
+  ( MonadUnliftIO m
+  , Produces req MimeJSON
+  , MimeUnrender MimeJSON resp
   , MimeType contentType
+  , HasOptionalParam req Limit
+  , HasOptionalParam req Continue
+  , HasOptionalParam req Watch
+  , HasOptionalParam req ResourceVersion
+  , FromJSON singleItem
   ) =>
   -- | extracts metadata from the response
   (resp -> Maybe V1ListMeta) ->
   -- | extracts a list of items from the response
   (resp -> [singleItem]) ->
+  -- | The 'KubernetesRequest'
+  KubernetesRequest req contentType resp MimeJSON ->
   -- | Access the stream from within the closure and implement your logic here. The HTTP connection will be discarded once the
   -- closure returns. It is possible never to return so items are watched for the entire lifetime of the program.
   Closure m singleItem done ->
-  -- | The 'KubernetesRequest'
-  KubernetesRequest req contentType resp MimeJSON ->
   HoperatorT m done
-listThenWatchStream req
+listThenWatchStream extractMeta extractItems req closure = do
+  signalMVar <- liftIO newEmptyMVar
+  let stream = do
+        listStream extractMeta extractItems req & S.map (WatchEvent "Modified")
+        version <- lift $ lookupResourceVersion req
+        let watchReq = case version of
+              Just v -> req -&- v
+              Nothing -> req
+        watchStreamUnsafe (Proxy @singleItem) signalMVar watchReq
+  closure stream <* liftIO (putMVar signalMVar ())
 
-wrapClosureWithLogs :: MonadUnliftIO m => Text -> Closure m item done -> Closure m item done
+wrapClosureWithLogs :: MonadIO m => Text -> Closure m item done -> Closure m item done
 wrapClosureWithLogs ctx closure str = do
   lTrace $ "Hoperator.Watcher: Acquiring stream (" <> ctx <> ")"
   result <- closure str
   lTrace $ "Hoperator.Watcher: Closing stream (" <> ctx <> ")"
   pure result
 
-streamParse ::
+byteStreamToEventStream ::
   forall m a.
-  (MonadUnliftIO m, FromJSON a) =>
+  (MonadIO m, FromJSON a) =>
   ByteStream m () ->
   Stream (Of a) m ()
-streamParse bs =
+byteStreamToEventStream bs =
   Q.lines bs
     & S.mapped Q.toLazy
     & S.mapM (\res -> liftIO (print res) >> pure res)
@@ -167,3 +197,33 @@ streamParse bs =
           Right a -> pure $ Just a
           Left err -> liftIO (print err) $> Nothing
       )
+
+-- | Watches resources in the background using the provided request.
+-- The HTTP connection will be kept open for as long as the provided 'MVar' remains empty
+watchStreamUnsafe ::
+  forall req resp contentType singleItem done m.
+  ( HasOptionalParam req Watch
+  , MonadIO m
+  , FromJSON singleItem
+  , MimeType contentType
+  ) =>
+  -- | A Proxy that indicates the expected type of single elements in the stream so we can determine the correct JSON decoder
+  Proxy singleItem ->
+  MVar () ->
+  -- | The 'KubernetesRequest'
+  KubernetesRequest req contentType resp MimeJSON ->
+  Stream (Of (WatchEvent singleItem)) (HoperatorT m) ()
+watchStreamUnsafe _ signalMVar req = do
+  HoperatorEnv{manager, kubernetesClientConfig} <- ask
+  streamMVar <- liftIO $ newEmptyMVar @(Stream (Of (WatchEvent singleItem)) (HoperatorT m) ())
+  let closure bs = do
+        let stream = hoist liftIO $ byteStreamToEventStream bs
+        putMVar streamMVar stream
+        readMVar signalMVar
+  threadId <- liftIO . forkIO $ dispatchWatch manager kubernetesClientConfig req closure
+  lift . lDebug $
+    "Hoperator.Watcher.watchStreamUnsafe: Began watching using Thread ["
+      <> (pack . show $ threadId)
+      <> "] and request: "
+      <> (pack . show $ req)
+  join . liftIO $ readMVar streamMVar

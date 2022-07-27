@@ -127,3 +127,12 @@ executable example-watch-jobs
     hoperator
   main-is:        WatchJobsExample.hs
   hs-source-dirs: examples
+
+executable example-list-then-watch-jobs
+  import: common-dependencies
+  import: common-extensions
+  import: common-rts-options
+  build-depends:
+    hoperator
+  main-is:        ListThenWatchJobsExample.hs
+  hs-source-dirs: examples
