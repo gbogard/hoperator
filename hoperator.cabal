@@ -24,7 +24,8 @@ common common-dependencies
     build-depends:
         aeson >=1.0 && <2.0,
         base,
-        containers,
+        bytestring,
+        hashable,
         haskell-kubernetes,
         hoauth2 ==1.16.2,
         kubernetes-client==0.4.2.0,
@@ -38,7 +39,7 @@ common common-dependencies
         transformers,
         transformers-base,
         unliftio-core,
-        vector,
+        unordered-containers >= 0.2,
         http-client
         
 common common-rts-options
@@ -86,6 +87,7 @@ library
     exposed-modules:
         Hoperator,
         Hoperator.Core,
+        Hoperator.Core.Cache,
         Hoperator.Watcher
 
 test-suite tests

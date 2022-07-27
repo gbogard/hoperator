@@ -6,11 +6,13 @@ import Control.Monad.Base
 import Control.Monad.IO.Unlift (MonadIO (liftIO), MonadUnliftIO)
 import Control.Monad.Reader (MonadIO, MonadPlus, MonadReader (ask), ReaderT (runReaderT))
 import Control.Monad.Trans (MonadTrans)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Text
 import qualified Data.Text.ANSI as A
 import qualified Data.Text.IO as T
 import Data.Time (getCurrentTime)
 import Data.Time.Format.ISO8601 (iso8601Show)
+import qualified Hoperator.Core.Cache as C
 import Kubernetes.OpenAPI
   ( KubernetesClientConfig (configHost, configValidateAuthMethods),
     KubernetesRequest,
@@ -18,6 +20,7 @@ import Kubernetes.OpenAPI
     MimeType,
     MimeUnrender,
     Produces,
+    ResourceVersion,
     dispatchMime',
     newConfig,
   )
@@ -33,10 +36,16 @@ import Network.HTTP.Client (Manager, defaultManagerSettings, newManager)
 -- essentially a 'ReaderT' using 'HoperatorEnv' as the injected environment. 'HoperatorEnv' contains everything
 -- your operators need to function, including the Http 'Manager' and the 'KubernetesClientConfig'.
 data HoperatorEnv = HoperatorEnv
-  { manager :: Manager
+  { -- | The http 'Manager' that lets us execute HTTP requests
+    manager :: Manager
+    -- | The config that tells us where to find the Kubernetes API and how to authenticate
   , kubernetesClientConfig :: KubernetesClientConfig
+  -- | The log level for all messages sent via 'MonadLog'
   , logLevel :: LogLevel
+  -- | The chunk size for list requests, i.e. the default "limit" parameter sent to the K8s API
   , chunkSize :: Int
+  -- | A cache for 'ResourceVersion"
+  , cache :: IORef C.Cache
   }
 
 newtype HoperatorT m a = HoperatorT (ReaderT HoperatorEnv m a)
@@ -56,10 +65,11 @@ deriving newtype instance MonadBase b m => MonadBase b (HoperatorT m)
 
 -- | The default Hoperator env assumes that the Kubernetes API is reachable on "http://localhost:8001",
 -- which should be the case using `kubectl proxy`.
-defaultHoperatorEnv :: MonadBase IO m => m HoperatorEnv
+defaultHoperatorEnv :: MonadIO m => m HoperatorEnv
 defaultHoperatorEnv = do
-  manager <- liftBase $ newManager defaultManagerSettings
-  defaultConfig <- liftBase newConfig
+  manager <- liftIO $ newManager defaultManagerSettings
+  defaultConfig <- liftIO newConfig
+  cache <- liftIO $ newIORef C.empty
   let config = defaultConfig{configHost = "http://localhost:8001", configValidateAuthMethods = False}
   pure $
     HoperatorEnv
@@ -67,6 +77,7 @@ defaultHoperatorEnv = do
       , kubernetesClientConfig = config
       , logLevel = Debug
       , chunkSize = 500
+      , cache
       }
 
 runHoperatorT :: HoperatorEnv -> HoperatorT m a -> m a
@@ -155,3 +166,51 @@ lWarn = logMsg Warn
 -- | Logs a message using the 'Error' level
 lError :: MonadLog m => Text -> m ()
 lError = logMsg Error
+
+-- * Cache
+
+--
+
+-- $cache
+--
+-- The cache associates Kubernetes requests with their latest 'ResourceVersion', allowing
+-- us to efficiently detect changes by watching only from the last seen events.
+
+-- | Registers the last seen 'ResourceVersion' for a given 'KubernetesRequest'
+-- You typically shouldn't use this function and rely instead on higher-level utilities like 'Hoperator.Watcher'
+-- to detect changes efficiently
+putResourceVersion ::
+  MonadIO m =>
+  KubernetesRequest req contentType resp accept ->
+  ResourceVersion ->
+  HoperatorT m ()
+putResourceVersion req = putResourceVersion' $ C.mkKey req
+
+-- | Like 'putResourceVersion' but uses a pre-built 'Key' instead of a 'KubernetesRequest'
+-- Keys can be obtained using 'Hoperator.Cache.mkKey'
+putResourceVersion' ::
+  MonadIO m =>
+  C.Key ->
+  ResourceVersion ->
+  HoperatorT m ()
+putResourceVersion' k version = do
+  HoperatorEnv{cache} <- ask
+  liftIO $ atomicModifyIORef' cache (\c -> (C.putResourceVersion' c k version, ()))
+
+-- | Fetches the last seen 'ResourceVersion' for a given 'KubernetesRequest'
+lookupResourceVersion ::
+  MonadIO m =>
+  KubernetesRequest req contentType resp accept ->
+  HoperatorT m (Maybe ResourceVersion)
+lookupResourceVersion req = lookupResourceVersion' $ C.mkKey req
+
+-- | Like 'lookupResourceVersion' but uses a pre-built 'Key' instead of a 'KubernetesRequest'
+-- Keys can be obtained using 'Hoperator.Cache.mkKey'
+lookupResourceVersion' ::
+  MonadIO m =>
+  C.Key ->
+  HoperatorT m (Maybe ResourceVersion)
+lookupResourceVersion' key = do
+  HoperatorEnv{cache} <- ask
+  c <- liftIO $ readIORef cache
+  pure $ C.lookupResourceVersion' c key

@@ -2,6 +2,7 @@ module Hoperator.Watcher
   ( Closure,
     listStream,
     watchStream,
+    watchStreamFromLatestResourceVersion,
   )
 where
 
@@ -29,6 +30,7 @@ type Closure m item done = Stream (Of (WatchEvent item)) (HoperatorT m) () -> Ho
 
 -- | Executes a Kubernetes request and returns the result as a stream of elements.
 -- This internally uses the 'APIListChunking' feature of Kubernetes to retrieve the results in manageable chunks.
+-- The chunk size (the "limit" parameter passed to the Kubernetes API) is configured as part of 'HoperatorEnv'
 listStream ::
   forall req resp accept contentType singleItem m.
   ( MonadIO m
@@ -56,10 +58,18 @@ listStream extractMeta extractItems req = do
         Right res -> do
           let items = extractItems res
           case extractMeta res of
+            -- If this is not the last page, loop using the provided "continue" parameter
             Just m | Just continuation <- v1ListMetaContinue m -> do
               lift . lTrace $ "Hoperator.Watcher.listStream: Continuing using received continuation " <> (pack . show $ continuation)
               let reqWithContinue = req -&- Continue continuation
               S.each items >> run reqWithContinue
+            -- If this is is the last page and have a 'ResourceVersion', store it in the
+            -- cache to further calls to 'watchStream' are more efficient.
+            Just m | Just resourceVersion <- v1ListMetaResourceVersion m -> do
+              lift . lTrace $ "Hoperator.Watcher.listStream: Storing resource version " <> resourceVersion
+              lift . putResourceVersion req . ResourceVersion $ resourceVersion
+              S.each items
+            -- If we don't have a 'ResourceVersion' to store, just return the stream
             _ -> S.each items
         Left err -> lift . lError . pack . show $ err
 
@@ -68,7 +78,11 @@ listStream extractMeta extractItems req = do
 -- The resulting HTTP connection, and thus stream, will be kept active as long as the provided action/closure hasn't returned.
 watchStream ::
   forall req resp contentType singleItem done m.
-  (HasOptionalParam req Watch, MonadUnliftIO m, FromJSON singleItem, MimeType contentType) =>
+  ( HasOptionalParam req Watch
+  , MonadUnliftIO m
+  , FromJSON singleItem
+  , MimeType contentType
+  ) =>
   -- | A Proxy that indicates the expected type of single elements in the stream so we can determine the correct JSON decoder
   Proxy singleItem ->
   -- | Access the stream from within the closure and implement your logic here. The HTTP connection will be discarded once the
@@ -83,6 +97,53 @@ watchStream _ closure req = do
   withRunInIO $ \toIO ->
     dispatchWatch manager kubernetesClientConfig req $ \bs ->
       toIO . closureWithLogs . hoist liftIO $ streamParse bs
+
+-- | Same as 'watchStream' but also sends a 'ResourceVersion' parameter so that
+-- events are only retrieved from the last seen 'ResourceVersion' according to our cache.
+-- If we don't have a last 'ResourceVersion' for the request, then this function performs the same as 'watchStream'
+watchStreamFromLatestResourceVersion ::
+  forall req resp contentType singleItem done m.
+  ( HasOptionalParam req Watch
+  , HasOptionalParam req ResourceVersion
+  , MonadUnliftIO m
+  , FromJSON singleItem
+  , MimeType contentType
+  ) =>
+  -- | A Proxy that indicates the expected type of single elements in the stream so we can determine the correct JSON decoder
+  Proxy singleItem ->
+  -- | Access the stream from within the closure and implement your logic here. The HTTP connection will be discarded once the
+  -- closure returns. It is possible never to return so items are watched for the entire lifetime of the program.
+  Closure m singleItem done ->
+  -- | The 'KubernetesRequest'
+  KubernetesRequest req contentType resp MimeJSON ->
+  HoperatorT m done
+watchStreamFromLatestResourceVersion p closure req = do
+  version <- lookupResourceVersion req
+  let reqWithVersion =
+        case version of
+          Just v -> req -&- v
+          Nothing -> req
+  watchStream p closure reqWithVersion
+
+listThenWatchStream ::
+  forall req resp contentType singleItem done m.
+  ( HasOptionalParam req Watch
+  , HasOptionalParam req ResourceVersion
+  , MonadUnliftIO m
+  , FromJSON singleItem
+  , MimeType contentType
+  ) =>
+  -- | extracts metadata from the response
+  (resp -> Maybe V1ListMeta) ->
+  -- | extracts a list of items from the response
+  (resp -> [singleItem]) ->
+  -- | Access the stream from within the closure and implement your logic here. The HTTP connection will be discarded once the
+  -- closure returns. It is possible never to return so items are watched for the entire lifetime of the program.
+  Closure m singleItem done ->
+  -- | The 'KubernetesRequest'
+  KubernetesRequest req contentType resp MimeJSON ->
+  HoperatorT m done
+listThenWatchStream req
 
 wrapClosureWithLogs :: MonadUnliftIO m => Text -> Closure m item done -> Closure m item done
 wrapClosureWithLogs ctx closure str = do
