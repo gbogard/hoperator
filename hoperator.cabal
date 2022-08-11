@@ -25,12 +25,14 @@ common common-dependencies
         aeson >=1.0 && <2.0,
         base,
         bytestring,
+        exceptions,
         hashable,
         haskell-kubernetes,
         hoauth2 ==1.16.2,
         kubernetes-client==0.4.2.0,
         kubernetes-client-core==0.4.2.0,
         mtl,
+        openapi3,
         streaming,
         streaming-bytestring,
         text,
@@ -97,6 +99,14 @@ test-suite tests
     type: exitcode-stdio-1.0
     main-is: Main.hs
     hs-source-dirs: tests
+    other-modules:
+      HoperatorTests.Core,
+      HoperatorTests.Watcher
+    build-depends:
+      hoperator,
+      optics-core,
+      tasty ^>=1.4.2,
+      tasty-hunit
 
 executable example-list-jobs
   import: common-dependencies

@@ -25,6 +25,7 @@ import Kubernetes.OpenAPI
     newConfig,
   )
 import Network.HTTP.Client (Manager, defaultManagerSettings, newManager)
+import Control.Monad.Catch (MonadThrow, MonadCatch, MonadMask)
 
 -- * 'HoperatorEnv' and the 'HoperatorT monad transformer
 
@@ -58,6 +59,9 @@ newtype HoperatorT m a = HoperatorT (ReaderT HoperatorEnv m a)
     , MonadTrans
     , Alternative
     , MonadPlus
+    , MonadThrow
+    , MonadCatch
+    , MonadMask
     )
 
 deriving newtype instance MonadUnliftIO m => MonadUnliftIO (HoperatorT m)

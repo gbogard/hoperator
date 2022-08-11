@@ -1,2 +1,8 @@
+import Test.Tasty
+import HoperatorTests.Watcher
+
 main :: IO ()
-main = putStrLn "tests"
+main = defaultMain allTests
+
+allTests :: TestTree
+allTests = testGroup "Tests" [watcherTests]
