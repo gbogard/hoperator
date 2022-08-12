@@ -3,9 +3,11 @@ module Hoperator.Core where
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Base
+import Control.Monad.Catch (Exception, MonadCatch, MonadMask, MonadThrow (throwM))
 import Control.Monad.IO.Unlift (MonadIO (liftIO), MonadUnliftIO)
 import Control.Monad.Reader (MonadIO, MonadPlus, MonadReader (ask), ReaderT (runReaderT))
 import Control.Monad.Trans (MonadTrans)
+import Data.Data (Typeable)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Text
 import qualified Data.Text.ANSI as A
@@ -25,7 +27,6 @@ import Kubernetes.OpenAPI
     newConfig,
   )
 import Network.HTTP.Client (Manager, defaultManagerSettings, newManager)
-import Control.Monad.Catch (MonadThrow, MonadCatch, MonadMask)
 
 -- * 'HoperatorEnv' and the 'HoperatorT monad transformer
 
@@ -39,14 +40,14 @@ import Control.Monad.Catch (MonadThrow, MonadCatch, MonadMask)
 data HoperatorEnv = HoperatorEnv
   { -- | The http 'Manager' that lets us execute HTTP requests
     manager :: Manager
-    -- | The config that tells us where to find the Kubernetes API and how to authenticate
-  , kubernetesClientConfig :: KubernetesClientConfig
-  -- | The log level for all messages sent via 'MonadLog'
-  , logLevel :: LogLevel
-  -- | The chunk size for list requests, i.e. the default "limit" parameter sent to the K8s API
-  , chunkSize :: Int
-  -- | A cache for 'ResourceVersion"
-  , cache :: IORef C.Cache
+  , -- | The config that tells us where to find the Kubernetes API and how to authenticate
+    kubernetesClientConfig :: KubernetesClientConfig
+  , -- | The log level for all messages sent via 'MonadLog'
+    logLevel :: LogLevel
+  , -- | The chunk size for list requests, i.e. the default "limit" parameter sent to the K8s API
+    chunkSize :: Int
+  , -- | A cache for 'ResourceVersion"
+    cache :: IORef C.Cache
   }
 
 newtype HoperatorT m a = HoperatorT (ReaderT HoperatorEnv m a)
@@ -87,6 +88,16 @@ defaultHoperatorEnv = do
 runHoperatorT :: HoperatorEnv -> HoperatorT m a -> m a
 runHoperatorT env (HoperatorT reader) = runReaderT reader env
 
+-- * Exceptions
+
+--
+
+-- $exceptions
+
+newtype HoperatorException = KubernetesClientMimeError MimeError
+  deriving stock (Show, Typeable)
+  deriving anyclass (Exception)
+
 -- * Kubernetes client utilities
 
 --
@@ -104,6 +115,24 @@ runRequest ::
 runRequest req = do
   HoperatorEnv{manager, kubernetesClientConfig} <- ask
   liftIO $ dispatchMime' manager kubernetesClientConfig req
+
+-- | Similar to 'runRequest' but throws a 'HoperatorException' instead of returning
+-- an 'Either'
+runRequest' ::
+  forall req res accept contentType m.
+  ( MonadIO m
+  , Produces req accept
+  , MimeUnrender accept res
+  , MimeType contentType
+  , MonadThrow m
+  ) =>
+  KubernetesRequest req contentType res accept ->
+  HoperatorT m res
+runRequest' req = do
+  res <- runRequest req
+  case res of
+    Left err -> throwM $ KubernetesClientMimeError err
+    Right res -> pure res
 
 -- * Logging
 

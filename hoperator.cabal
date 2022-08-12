@@ -103,7 +103,9 @@ test-suite tests
       HoperatorTests.Core,
       HoperatorTests.Watcher
     build-depends:
+      unordered-containers,
       hoperator,
+      HUnit,
       optics-core,
       tasty ^>=1.4.2,
       tasty-hunit
